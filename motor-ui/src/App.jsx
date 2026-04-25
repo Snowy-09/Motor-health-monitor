@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts';
 
 // --- NOTIFICATION SETUP ---
-const PUBLIC_KEY = "BIuK1jgnnxunwDzvs7kdIlY5TIn9QX0xahfBj9VrX5ExQC2hnbx-yJ6Ik8GHfWYXdpvZtpvemOoqv46GXHakcaA"; // <--- Put your long string here!
+const PUBLIC_KEY = "BIuK1jgnnxunwDzvs7kdIlY5TIn9QX0xahfBj9VrX5ExQC2hnbx-yJ6Ik8GHfWYXdpvZtpvemOoqv46GXHakcaA"; // <--- Paste your VAPID Public Key here!
 
 function urlBase64ToUint8Array(base64String) {
   const padding = '='.repeat((4 - base64String.length % 4) % 4);
@@ -21,7 +21,7 @@ export default function App() {
   const [systemOn, setSystemOn] = useState(true); 
   const [isUnstable, setIsUnstable] = useState(false); 
   
-  // NEW: Multi-Motor Support
+  // Multi-Motor Support
   const [motors, setMotors] = useState(['Unit Alpha', 'Unit Beta', 'Conveyor Drive 1']);
   const [selectedMotor, setSelectedMotor] = useState('Unit Alpha');
 
@@ -30,7 +30,24 @@ export default function App() {
   const [timeRange, setTimeRange] = useState(60); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // --- 2. PUSH NOTIFICATION ACTIVATOR ---
+  // --- 2. DYNAMIC TIME TILL FAILURE CALCULATOR ---
+  const calculateTTF = () => {
+    if (motorData.ml_status === 'WARNING' || isUnstable) return "CRITICAL";
+    if (!systemOn) return "OFFLINE";
+
+    const heatingRate = motorData.future_temp - motorData.temp;
+    
+    if (heatingRate <= 0.05) return "> 24 HRS";
+
+    const degreesLeft = 85.0 - motorData.temp;
+    const secondsTillFailure = (degreesLeft / heatingRate) * 30;
+
+    if (secondsTillFailure < 60) return `${Math.max(0, Math.round(secondsTillFailure))} SEC`;
+    if (secondsTillFailure < 3600) return `${Math.max(0, Math.round(secondsTillFailure / 60))} MIN`;
+    return `${Math.max(0, (secondsTillFailure / 3600)).toFixed(1)} HRS`;
+  };
+
+  // --- 3. PUSH NOTIFICATION ACTIVATOR ---
   async function enableNotifications() {
     try {
       const permission = await Notification.requestPermission();
@@ -43,13 +60,12 @@ export default function App() {
         applicationServerKey: urlBase64ToUint8Array(PUBLIC_KEY)
       });
 
-      // MAKE SURE YOUR NGROK URL IS CORRECT HERE
       await fetch('https://rancidity-reluctant-headpiece.ngrok-free.dev/api/subscribe', {
         method: 'POST',
         body: JSON.stringify(subscription),
         headers: { 
           'Content-Type': 'application/json',
-          'ngrok-skip-browser-warning': 'true'  
+          'ngrok-skip-browser-warning': 'true' // Bypasses the Ngrok block screen on phones
         }
       });
       
@@ -60,11 +76,10 @@ export default function App() {
     }
   }
 
-  // --- 3. DATA BRIDGE & BULLETPROOF DEMO FALLBACK ---
+  // --- 4. DATA BRIDGE (ARDUINO COMMS & FALLBACK) ---
   useEffect(() => {
     const fetchHardwareData = async () => {
       try {
-        // MAKE SURE YOUR NGROK URL IS CORRECT HERE
         const response = await fetch('https://rancidity-reluctant-headpiece.ngrok-free.dev/api/motor', {
           headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -77,7 +92,7 @@ export default function App() {
         processDataPoint(newData);
 
       } catch (e) { 
-        // BACKEND OFFLINE - SILENTLY SWITCH TO FAKE DEMO DATA
+        // BACKEND OFFLINE - FAKE DEMO DATA
         setGraphHistory(prev => {
           const last = prev.length > 0 ? prev[prev.length - 1] : { time: 0, temp: 45, vibration: 1.5, current: 12 };
           const newTime = last.time + 1;
@@ -101,7 +116,6 @@ export default function App() {
     };
 
     const processDataPoint = (data, prevHistory = null) => {
-        // THE HARDWARE INTERLOCK LOGIC
         const DANGER_TEMP = 85.0; 
         const DANGER_VIBE = 6.0;  
         
@@ -132,7 +146,7 @@ export default function App() {
     return () => clearInterval(interval); 
   }, [systemOn, selectedMotor]); 
 
-  // --- 4. THE GHOST LINE INJECTION ---
+  // --- 5. THE GHOST LINE INJECTION ---
   const displayData = graphHistory.slice(-timeRange);
   let projectedData = [...displayData];
   const lastPoint = projectedData[projectedData.length - 1];
@@ -155,7 +169,7 @@ export default function App() {
     });
   }
 
-  // --- 5. UI ANIMATIONS & RESPONSIVE STYLES ---
+  // --- 6. UI ANIMATIONS & RESPONSIVE STYLES ---
   const customStyles = `
     @keyframes pulse-glow { 0%, 100% { opacity: 1; text-shadow: 0 0 20px currentColor; } 50% { opacity: 0.5; text-shadow: 0 0 5px currentColor; } }
     .glow-text { animation: pulse-glow 2s infinite; }
@@ -180,7 +194,7 @@ export default function App() {
     }
   `;
 
-  // --- 6. REUSABLE CHART COMPONENT ---
+  // --- 7. REUSABLE CHART COMPONENT ---
   const ChartBox = ({ title, dKey, color, data, threshold, ghostKey, ghostName }) => (
     <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#111827', padding: '20px 15px', borderRadius: '15px', marginBottom: '25px', height: '320px', border: '1px solid #1F2937' }}>
       <p style={{ margin: '0 0 10px 0', color: '#9CA3AF', fontWeight: 'bold', letterSpacing: '1px' }}>{title}</p>
@@ -269,7 +283,6 @@ export default function App() {
                </div>
                <div className="system-command-buttons" style={{ display: 'flex', gap: '15px' }}>
                   
-                  {/* THE HARDWARE INTERLOCK LOCKOUT */}
                   <button 
                     onClick={() => setSystemOn(true)} 
                     disabled={isUnstable} 
@@ -300,13 +313,18 @@ export default function App() {
                   <p style={{ color: '#6B7280' }}>MODE: {isUnstable ? "LOCKED" : motorData.state}</p>
                 </div>
               </div>
+              
+              {/* --- NEW TIME TILL FAILURE UI CARD --- */}
               <div className="ani-card" style={{ backgroundImage: 'linear-gradient(90deg, #3b82f6, #1e3a8a, #3b82f6)' }}>
                 <div className="card-inner">
                   <p style={{ color: '#9CA3AF', fontSize: '0.9rem', fontWeight: 'bold' }}>TIME TILL FAILURE</p>
-                  <h2 style={{ fontSize: '4rem', margin: '15px 0', color: motorData.ml_status === 'WARNING' ? '#F59E0B' : 'white' }}>{motorData.ml_status === 'WARNING' ? "15 SEC" : "STABLE"}</h2>
+                  <h2 style={{ fontSize: '3.2rem', margin: '15px 0', color: (motorData.ml_status === 'WARNING' || isUnstable) ? '#F59E0B' : 'white' }}>
+                    {calculateTTF()}
+                  </h2>
                   <p style={{ color: '#6B7280' }}>PREDICTED: {motorData.future_temp.toFixed(1)}°C</p>
                 </div>
               </div>
+
             </div>
           </div>
         ) : (

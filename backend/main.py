@@ -1,110 +1,49 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-import numpy as np
-import time
 import serial
-from sklearn.linear_model import LinearRegression
-from sklearn.preprocessing import PolynomialFeatures
-from sklearn.pipeline import Pipeline
+import json
+import threading
 
-# ---> ADD THIS LINE <---
-from simulator import generate_demo_data
-
-# --- CONFIGURATION ---
-SERIAL_PORT = 'COM5'  # Update this!
+# --- ARDUINO CONFIG ---
+# Replace 'COM3' with the port you saw in the Arduino IDE!
+ARDUINO_PORT = 'COM3' 
 BAUD_RATE = 9600
-HISTORY_LIMIT = 1800
 
-app = FastAPI()
+latest_hardware_data = {
+    "temp": 0, "vibration": 0, "current": 0, 
+    "ml_status": "NORMAL", "future_temp": 0, "time": 0
+}
 
-# Allow the React app to connect
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+def serial_reader():
+    global latest_hardware_data
+    try:
+        # Open the connection to the Arduino
+        ser = serial.Serial(ARDUINO_PORT, BAUD_RATE, timeout=1)
+        print(f"✅ Successfully connected to Arduino on {ARDUINO_PORT}")
+        
+        while True:
+            if ser.in_waiting > 0:
+                # Read the line from Arduino
+                line = ser.readline().decode('utf-8').strip()
+                try:
+                    # Parse the JSON string
+                    data = json.loads(line)
+                    
+                    # Update our global storage
+                    latest_hardware_data["temp"] = data["temp"]
+                    latest_hardware_data["vibration"] = data["vibration"]
+                    latest_hardware_data["current"] = data["current"]
+                    latest_hardware_data["time"] += 1
+                    
+                    # Basic Prediction Logic
+                    latest_hardware_data["future_temp"] = data["temp"] + 1.5 
+                    if data["temp"] > 50: # Matching your teammate's threshold
+                         latest_hardware_data["ml_status"] = "WARNING"
+                    else:
+                         latest_hardware_data["ml_status"] = "NORMAL"
 
-# --- INITIALIZE SERIAL ---
-try:
-    ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
-    time.sleep(2)
-    print(f"✅ Connected to {SERIAL_PORT}")
-except Exception as e:
-    print(f"❌ Serial Error: {e}")
-    ser = None
+                except:
+                    pass # Ignore messy data
+    except Exception as e:
+        print(f"❌ Serial Error: {e}")
 
-# Global Data Store
-data_history = pd.DataFrame(columns=['time', 'temp', 'vib', 'current'])
-start_time = time.time()
-
-# --- ML MODELS ---
-def get_dynamic_threshold(current_load):
-    if current_load > 4.0: return 75.0, "HEAVY"
-    elif current_load < 0.5: return 45.0, "IDLE"
-    return 60.0, "NOMINAL"
-
-def predict_future(df, feature, seconds_ahead=15):
-    if len(df) < 15: return None
-    model = Pipeline([
-        ('poly', PolynomialFeatures(degree=2)),
-        ('linear', LinearRegression())
-    ])
-    X = df[['time']].values
-    y = df[feature].values
-    model.fit(X, y)
-    future_time = X[-1][0] + seconds_ahead
-    return model.predict([[future_time]])[0]
-
-def is_anomaly(val, history):
-    if len(history) < 20: return False
-    z = (val - np.mean(history)) / (np.std(history) + 0.1)
-    return abs(z) > 3
-
-# --- THE API BRIDGE ---
-@app.get("/api/motor")
-def get_motor_data():
-    global data_history
-    elapsed = time.time() - start_time
-
-    # 1. Read from Simulator (Instead of Arduino)
-    temp, vib, curr = generate_demo_data(elapsed)
-
-    # 2. Update History
-    new_row = pd.DataFrame({'time': [elapsed], 'temp': [temp], 'vib': [vib], 'current': [curr]})
-    data_history = pd.concat([data_history, new_row], ignore_index=True).tail(HISTORY_LIMIT)
-
-    # 3. Run ML Math
-    limit, state = get_dynamic_threshold(curr)
-    prediction = predict_future(data_history, 'temp')
-    
-    # Safe check for anomaly history
-    vib_history = data_history['vib'].iloc[:-1] if not data_history.empty else []
-    anomaly = is_anomaly(vib, vib_history)
-
-    # 4. Generate the AI Console Messages
-    status_color = "NORMAL"
-    log_msg = "All systems nominal."
-
-    if anomaly:
-        status_color = "WARNING"
-        log_msg = f"⚠️ ANOMALY: Irregular vibration pattern ({vib:.1f})"
-    elif prediction and prediction > limit:
-        status_color = "WARNING"
-        log_msg = f"🛑 CRITICAL: Predicted overheat ({prediction:.1f}°C) in 15s!"
-    elif prediction:
-        log_msg = f"📈 Trend: Expected {prediction:.1f}°C soon."
-
-    # 5. Blast it over the Wi-Fi to React!
-    return {
-        "time": elapsed,
-        "temp": temp,
-        "vibration": vib,
-        "current": curr,
-        "state": state,
-        "target_limit": limit,
-        "future_temp": round(prediction, 1) if prediction else temp,
-        "ml_status": status_color,
-        "ai_log": log_msg
-    }
+# Start the background thread
+threading.Thread(target=serial_reader, daemon=True).start()
