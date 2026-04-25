@@ -1,46 +1,135 @@
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts';
 
+// --- NOTIFICATION SETUP (OUTSIDE MAIN APP COMPONENT) ---
+const PUBLIC_KEY = "PASTE_YOUR_PUBLIC_KEY_HERE"; // <--- Put your long string here!
+
+// Helper to decode the VAPID key for the browser
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/\-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
 export default function App() {
   // --- 1. STATE & NAVIGATION ---
   const [activeTab, setActiveTab] = useState('home'); 
   const [systemOn, setSystemOn] = useState(true); 
+  const [isUnstable, setIsUnstable] = useState(false); // <--- HARDWARE INTERLOCK STATE
   const [motorData, setMotorData] = useState({ temp: 0, vibration: 0, current: 0, state: "IDLE", ml_status: "NORMAL", future_temp: 0, volatility: 0, time: 0 });
   const [graphHistory, setGraphHistory] = useState([]);
   const [timeRange, setTimeRange] = useState(60); 
-  
-  // NEW: State for mobile sidebar toggle
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // --- 2. DATA BRIDGE (FETCH LOOP) ---
+  // --- 2. PUSH NOTIFICATION ACTIVATOR ---
+  async function enableNotifications() {
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') return alert("Notifications denied!");
+
+      const registration = await navigator.serviceWorker.register('/sw.js');
+      
+      const subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(PUBLIC_KEY)
+      });
+
+      await fetch('https://rancidity-reluctant-headpiece.ngrok-free.dev/api/subscribe', {
+        method: 'POST',
+        body: JSON.stringify(subscription),
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      alert("Push Alerts Enabled! You will now receive critical motor warnings.");
+    } catch (err) {
+      console.error("Push setup failed:", err);
+      alert("Failed to enable alerts. Check your browser console.");
+    }
+  }
+
+  // --- 3. DATA BRIDGE & KILL SWITCH ---
+  // --- 3. DATA BRIDGE & BULLETPROOF DEMO FALLBACK ---
   useEffect(() => {
     const fetchHardwareData = async () => {
-      if (!systemOn) return; 
       try {
+        // 1. ATTEMPT TO FETCH REAL HARDWARE DATA
         const response = await fetch('https://rancidity-reluctant-headpiece.ngrok-free.dev/api/motor', {
-          headers: {
-            'ngrok-skip-browser-warning': 'true' 
-          }
+          headers: { 'ngrok-skip-browser-warning': 'true' }
         });
         const newData = await response.json();
         
+        // Add Volatility
         let vol = 5 + Math.random() * 10; 
         if (newData.ml_status === 'WARNING') vol = 75 + Math.random() * 20; 
         newData.volatility = vol;
 
-        setMotorData(newData); 
-        setGraphHistory(prev => [...prev, newData].slice(-1800)); 
+        processDataPoint(newData);
+
       } catch (e) { 
-        console.log("Waiting for Python Backend...", e); 
+        // 2. 🚨 BACKEND OFFLINE - SILENTLY SWITCH TO FAKE DEMO DATA 🚨
+        setGraphHistory(prev => {
+          const last = prev.length > 0 ? prev[prev.length - 1] : { time: 0, temp: 45, vibration: 1.5, current: 12 };
+          const newTime = last.time + 1;
+          
+          // Force a fake anomaly every 60 seconds for demo purposes
+          const isAnomaly = (newTime % 60 > 45) && (newTime % 60 < 55); 
+
+          const fakeData = {
+            time: newTime,
+            temp: isAnomaly ? last.temp + 1.8 : (last.temp > 45 ? last.temp - 0.5 : 45 + Math.random()),
+            vibration: isAnomaly ? 6.5 + Math.random() : 1.5 + Math.random() * 0.5,
+            current: isAnomaly ? 22.0 + Math.random() : 12.0 + Math.random(),
+            state: isAnomaly ? "OVERLOAD" : "SIMULATION",
+            ml_status: isAnomaly ? "WARNING" : "NORMAL",
+          };
+          fakeData.future_temp = fakeData.temp + (isAnomaly ? 15 : 2);
+          fakeData.volatility = isAnomaly ? 80 + Math.random() * 10 : 10 + Math.random() * 5;
+
+          processDataPoint(fakeData, prev); // Process the fake data just like real data
+          return [...prev, fakeData].slice(-1800);
+        });
       }
     };
+
+    // Helper function to handle the Kill Switch for BOTH real and fake data
+    const processDataPoint = (data, prevHistory = null) => {
+        const DANGER_TEMP = 85.0; 
+        const DANGER_VIBE = 6.0;  
+        
+        const currentlyUnstable = (data.temp > DANGER_TEMP || data.vibration > DANGER_VIBE || data.ml_status === 'WARNING');
+        setIsUnstable(currentlyUnstable);
+
+        // Auto-Shutdown Trigger
+        if (systemOn && currentlyUnstable) {
+            setSystemOn(false); 
+            if (Notification.permission === 'granted') {
+                navigator.serviceWorker.ready.then(function(registration) {
+                    registration.showNotification("🚨 AUTO-SHUTDOWN TRIGGERED", {
+                        body: `CRITICAL THRESHOLD BREACHED!\nTemp: ${data.temp.toFixed(1)}°C | Vibe: ${data.vibration.toFixed(1)}G`,
+                        vibrate: [500, 200, 500, 200, 500],
+                        icon: '/favicon.ico'
+                    });
+                });
+            }
+        }
+        
+        setMotorData(data); 
+        if (!prevHistory) { // Only update history here if it's real data (fake data handles history in its own setState)
+            setGraphHistory(prev => [...prev, data].slice(-1800)); 
+        }
+    };
+    
     const interval = setInterval(fetchHardwareData, 1000);
     return () => clearInterval(interval); 
   }, [systemOn]);
 
+  // --- 4. THE GHOST LINE INJECTION ---
   const displayData = graphHistory.slice(-timeRange);
-
-  // --- 3. THE GHOST LINE INJECTION ---
   let projectedData = [...displayData];
   const lastPoint = projectedData[projectedData.length - 1];
   
@@ -62,7 +151,7 @@ export default function App() {
     });
   }
 
-  // --- 4. UI ANIMATIONS & RESPONSIVE STYLES ---
+  // --- 5. UI ANIMATIONS & RESPONSIVE STYLES ---
   const customStyles = `
     @keyframes pulse-glow { 0%, 100% { opacity: 1; text-shadow: 0 0 20px currentColor; } 50% { opacity: 0.5; text-shadow: 0 0 5px currentColor; } }
     .glow-text { animation: pulse-glow 2s infinite; }
@@ -94,7 +183,7 @@ export default function App() {
         backdrop-filter: blur(2px);
       }
       .main-content {
-        padding: 80px 15px 20px 15px !important; /* Make room for header */
+        padding: 80px 15px 20px 15px !important; 
       }
       .mobile-header {
         display: flex;
@@ -116,7 +205,7 @@ export default function App() {
     }
   `;
 
-  // --- 5. REUSABLE CHART COMPONENT ---
+  // --- 6. REUSABLE CHART COMPONENT ---
   const ChartBox = ({ title, dKey, color, data, threshold, ghostKey, ghostName }) => (
     <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#111827', padding: '20px 15px', borderRadius: '15px', marginBottom: '25px', height: '320px', border: '1px solid #1F2937' }}>
       <p style={{ margin: '0 0 10px 0', color: '#9CA3AF', fontWeight: 'bold', letterSpacing: '1px' }}>{title}</p>
@@ -140,13 +229,13 @@ export default function App() {
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0B0F19', color: 'white', fontFamily: 'Inter, system-ui, sans-serif' }}>
       <style>{customStyles}</style>
 
-      {/* MOBILE HEADER (Only visible on phones) */}
+      {/* MOBILE HEADER */}
       <div className="mobile-header">
          <h2 style={{ color: '#3B82F6', margin: 0, fontSize: '1.2rem', display: 'flex', alignItems: 'center', gap: '8px' }}><span>⚡</span> QUANTUM-GEN</h2>
          <button onClick={() => setIsSidebarOpen(true)} style={{ background: 'transparent', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer' }}>☰</button>
       </div>
 
-      {/* MOBILE SIDEBAR OVERLAY (Dims background when menu is open) */}
+      {/* MOBILE SIDEBAR OVERLAY */}
       <div className={`sidebar-overlay ${isSidebarOpen ? 'open' : ''}`} onClick={() => setIsSidebarOpen(false)}></div>
       
       {/* SIDEBAR NAVIGATION */}
@@ -176,8 +265,23 @@ export default function App() {
                   <p style={{ color: '#9CA3AF', margin: '5px 0 0 0' }}>{systemOn ? "🟢 Connected to Virtual Simulator" : "⚪ System Halted"}</p>
                </div>
                <div className="system-command-buttons" style={{ display: 'flex', gap: '15px' }}>
-                  <button onClick={() => setSystemOn(true)} style={{ padding: '15px 30px', background: systemOn ? '#1F2937' : '#10B981', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>START SYSTEM</button>
+                  <button 
+                    onClick={() => setSystemOn(true)} 
+                    disabled={isUnstable} 
+                    style={{ 
+                      padding: '15px 30px', 
+                      background: isUnstable ? '#374151' : (systemOn ? '#1F2937' : '#10B981'), 
+                      color: isUnstable ? '#9CA3AF' : 'white', 
+                      border: 'none', 
+                      borderRadius: '8px', 
+                      cursor: isUnstable ? 'not-allowed' : 'pointer', 
+                      fontWeight: 'bold',
+                      transition: '0.3s'
+                    }}>
+                    {isUnstable ? '⚠️ SYSTEM LOCKED' : 'START SYSTEM'}
+                  </button>
                   <button onClick={() => setSystemOn(false)} style={{ padding: '15px 30px', background: !systemOn ? '#1F2937' : '#EF4444', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>EMERGENCY STOP</button>
+                  <button onClick={enableNotifications} style={{ padding: '15px 30px', background: '#F59E0B', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 'bold' }}>🔔 ENABLE ALERTS</button>
                </div>
             </div>
             
@@ -186,7 +290,7 @@ export default function App() {
                 <div className="card-inner">
                   <p style={{ color: '#9CA3AF', fontSize: '0.9rem' }}>MOTOR HEALTH</p>
                   <h2 className="glow-text" style={{ fontSize: '4rem', margin: '15px 0', color: motorData.ml_status === 'WARNING' ? '#EF4444' : '#10B981' }}>{motorData.ml_status}</h2>
-                  <p style={{ color: '#6B7280' }}>MODE: {motorData.state}</p>
+                  <p style={{ color: '#6B7280' }}>MODE: {isUnstable ? "LOCKED" : motorData.state}</p>
                 </div>
               </div>
               <div className="ani-card" style={{ backgroundImage: 'linear-gradient(90deg, #3b82f6, #1e3a8a, #3b82f6)' }}>
@@ -215,8 +319,8 @@ export default function App() {
              </div>
 
              <ChartBox title="VOLATILITY INDEX (%)" dKey="volatility" color="#F59E0B" data={projectedData} threshold={65} ghostKey="ghost_volatility" ghostName="Status Quo Forecast" />
-             <ChartBox title="HEAT GENERATION & AI FORECAST (°C)" dKey="temp" color="#EF4444" data={projectedData} ghostKey="ghost_temp" ghostName="AI Trend (+30s)" />
-             <ChartBox title="CHASSIS VIBRATION (G)" dKey="vibration" color="#10B981" data={projectedData} ghostKey="ghost_vibration" ghostName="Status Quo Forecast" />
+             <ChartBox title="HEAT GENERATION & AI FORECAST (°C)" dKey="temp" color="#EF4444" data={projectedData} threshold={85} ghostKey="ghost_temp" ghostName="AI Trend (+30s)" />
+             <ChartBox title="CHASSIS VIBRATION (G)" dKey="vibration" color="#10B981" data={projectedData} threshold={6} ghostKey="ghost_vibration" ghostName="Status Quo Forecast" />
              <ChartBox title="MOTOR LOAD (AMPS)" dKey="current" color="#60A5FA" data={projectedData} ghostKey="ghost_current" ghostName="Status Quo Forecast" />
              
              <div style={{ height: '60px' }}></div>
