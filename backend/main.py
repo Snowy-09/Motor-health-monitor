@@ -18,7 +18,7 @@ app.add_middleware(
 
 # --- 2. ARDUINO CONFIGURATION ---
 # IMPORTANT: Change 'COM3' to the port shown in your Arduino IDE!
-SERIAL_PORT = 'COM3' 
+SERIAL_PORT = 'COM5' 
 BAUD_RATE = 9600
 
 # This dictionary holds the current "Live" state of your motor
