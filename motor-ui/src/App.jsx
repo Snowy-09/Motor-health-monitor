@@ -47,7 +47,10 @@ export default function App() {
       await fetch('https://rancidity-reluctant-headpiece.ngrok-free.dev/api/subscribe', {
         method: 'POST',
         body: JSON.stringify(subscription),
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'  
+        }
       });
       
       alert("Push Alerts Enabled! You will now receive critical motor warnings.");
