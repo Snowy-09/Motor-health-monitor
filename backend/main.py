@@ -4,6 +4,7 @@ import serial
 import json
 import threading
 import time
+import serial.tools.list_ports
 
 app = FastAPI()
 
@@ -16,12 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- 2. ARDUINO CONFIGURATION ---
-# IMPORTANT: Change 'COM3' to the port shown in your Arduino IDE!
-SERIAL_PORT = 'COM5' 
-BAUD_RATE = 9600
-
-# This dictionary holds the current "Live" state of your motor
+# --- MISSING DICTIONARY ADDED BACK HERE ---
 latest_hardware_data = {
     "temp": 0.0,
     "vibration": 0,
@@ -33,9 +29,34 @@ latest_hardware_data = {
     "time": 0
 }
 
+# --- 2. ARDUINO AUTO-DISCOVERY ---
+BAUD_RATE = 9600
+
+def find_arduino_port():
+    print("🔍 Scanning USB ports for motor hardware...")
+    ports = serial.tools.list_ports.comports()
+    for port in ports:
+        # Looks for official Arduinos AND cheap hackathon clones
+        if "Arduino" in port.description or "CH340" in port.description or "USB Serial" in port.description:
+            print(f"🎯 Found Hardware on {port.device}!")
+            return port.device
+    print("⚠️ No hardware found. Defaulting to Simulator/Offline Mode.")
+    return None
+
+SERIAL_PORT = find_arduino_port()
+
 # --- 3. THE SERIAL BRIDGE THREAD ---
 def read_serial_data():
     global latest_hardware_data
+    
+    # --- THE QUICK CHECK ---
+    if SERIAL_PORT is None:
+        print("⚠️ No Arduino detected on USB. Hardware bridge is OFFLINE.")
+        latest_hardware_data["ai_log"] = "📡 No Hardware (Switch to Demo Mode)"
+        latest_hardware_data["state"] = "OFFLINE"
+        latest_hardware_data["ml_status"] = "DISCONNECTED"
+        return  # Gracefully exit the thread. No crashing!
+
     print(f"📡 Attempting to connect to Arduino on {SERIAL_PORT}...")
     
     try:
@@ -61,10 +82,9 @@ def read_serial_data():
                         latest_hardware_data["time"] += 1
                         
                         # --- AI / PREDICTIVE LOGIC ---
-                        # We calculate the "Future" temp based on current heating
                         latest_hardware_data["future_temp"] = data.get("temp", 0) + 1.2
                         
-                        # Set thresholds to match your teammate's Arduino logic (50°C)
+                        # Set thresholds to match your Arduino hardware logic (50°C)
                         if latest_hardware_data["temp"] > 50.0:
                             latest_hardware_data["ml_status"] = "WARNING"
                             latest_hardware_data["state"] = "CRITICAL"
@@ -78,14 +98,16 @@ def read_serial_data():
                             latest_hardware_data["ai_log"] = "✅ System Nominal"
 
                 except json.JSONDecodeError:
-                    # Skip partial/garbage lines
+                    # Skip partial/garbage lines (very common on Arduino startup)
                     continue
                 except Exception as e:
                     print(f"⚠️ Data Parsing Error: {e}")
                     
     except Exception as e:
         print(f"❌ SERIAL ERROR: {e}")
-        latest_hardware_data["ai_log"] = "❌ DISCONNECTED"
+        latest_hardware_data["ai_log"] = "❌ HARDWARE DISCONNECTED"
+        latest_hardware_data["state"] = "OFFLINE"
+        latest_hardware_data["ml_status"] = "DISCONNECTED"
 
 # Start the Arduino reader in a background thread so it doesn't block the API
 threading.Thread(target=read_serial_data, daemon=True).start()
@@ -102,8 +124,6 @@ async def subscribe_notifications(request: Request):
     """Handles the push notification setup from the browser"""
     data = await request.json()
     print("🔔 New Notification Subscription Received")
-    # For a hackathon, we just confirm receipt. 
-    # Real logic would save this 'data' to a database to send alerts later.
     return {"status": "success"}
 
 if __name__ == "__main__":
