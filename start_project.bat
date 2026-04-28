@@ -16,7 +16,7 @@ start "Python Backend" cmd /c "uvicorn main:app --host 0.0.0.0 --port 8000"
 timeout /t 3 /nobreak >nul
 
 :: OPEN YOUR LIVE VERCEL WEBSITE
-start https://https://motor-health-monitor.vercel.app
+start https://motor-health-monitor.vercel.app
 
 echo.
 echo ✅ HARDWARE BRIDGE ACTIVE! 
