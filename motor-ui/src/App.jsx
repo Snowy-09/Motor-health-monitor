@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts';
 
 // --- NOTIFICATION SETUP ---
@@ -16,6 +16,7 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 export default function App() {
+  const [demoMode, setDemoMode] = useState(false);
   const [activeTab, setActiveTab] = useState('home'); 
   const [systemOn, setSystemOn] = useState(true); 
   const [isUnstable, setIsUnstable] = useState(false); 
@@ -29,9 +30,12 @@ export default function App() {
   const [timeRange, setTimeRange] = useState(60); 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // Reference for local demo simulation time
+  const demoTimeRef = useRef(0);
+
   // --- DYNAMIC TTF MATH ---
   const calculateTTF = () => {
-    if (isBackendOffline) return "OFFLINE";
+    if (isBackendOffline && !demoMode) return "OFFLINE";
     if (motorData.ml_status === 'WARNING' || isUnstable) return "CRITICAL";
     if (!systemOn) return "HALTED";
 
@@ -67,20 +71,55 @@ export default function App() {
     }
   }
 
-  // --- CLEAN DATA FETCH (SIMULATION REMOVED) ---
+  // --- DATA FETCH & SIMULATION ENGINE ---
   useEffect(() => {
     const fetchHardwareData = async () => {
+      // 1. DEMO MODE LOGIC (Bypasses the internet)
+      if (demoMode) {
+        if (!systemOn) return;
+        demoTimeRef.current += 1;
+        const cycle = demoTimeRef.current % 120;
+        
+        let t = 35, v = 1500, c = 2.0, status = "NORMAL", log = "Systems Nominal";
+        
+        if (cycle < 40) { // Normal Idle
+          t = 35 + Math.random(); v = 1500 + Math.random() * 500; c = 2.0 + Math.random() * 0.2;
+        } else if (cycle < 50) { // Vibration Anomaly
+          t = 36 + Math.random(); v = 25000 + Math.random() * 2000; c = 2.5 + Math.random() * 0.2; 
+          status = "WARNING"; log = "⚠️ Erratic Vibration Spikes";
+        } else if (cycle < 100) { // Exponential Overheating
+          const p = (cycle - 50) / 50.0;
+          t = 36 + (16 * Math.pow(p, 2)) + Math.random(); // Peaks around 52C
+          v = 2000 + Math.random() * 500; c = 3.5 + Math.random() * 0.5;
+          if (t > 48) { status = "WARNING"; log = "🔥 Heat Limit Approaching"; }
+        } else { // Cooldown phase
+          const p = (cycle - 100) / 20.0;
+          t = 52 - (17 * p) + Math.random(); v = 1500 + Math.random() * 500; c = 1.5 + Math.random() * 0.2;
+        }
+
+        const fakeData = {
+          time: demoTimeRef.current,
+          temp: t, vibration: v, current: c,
+          state: status === "WARNING" ? "STRESSED" : "RUNNING",
+          ml_status: status,
+          future_temp: t + (status === "WARNING" ? (t > 48 ? 4 : 0.5) : 0.2), 
+          volatility: status === "WARNING" ? 85 : 15,
+          ai_log: log
+        };
+        setIsBackendOffline(false);
+        processDataPoint(fakeData);
+        return; // Exit here so it doesn't try to fetch
+      }
+
+      // 2. REAL HARDWARE LOGIC (Hits your ngrok)
       try {
         const response = await fetch('https://rancidity-reluctant-headpiece.ngrok-free.dev/api/motor', {
           headers: { 'ngrok-skip-browser-warning': 'true' }
         });
         const newData = await response.json();
-        
         setIsBackendOffline(false);
         processDataPoint(newData);
-
       } catch (e) { 
-        // Backend is unreachable
         setIsBackendOffline(true);
         setMotorData(prev => ({ ...prev, ml_status: "OFFLINE", state: "DISCONNECTED", ai_log: "❌ Connection Lost" }));
       }
@@ -94,11 +133,11 @@ export default function App() {
         setIsUnstable(currentlyUnstable);
 
         if (systemOn && currentlyUnstable) {
-            setSystemOn(false); 
+            setSystemOn(false); // Auto-shutdown
             if (Notification.permission === 'granted') {
                 navigator.serviceWorker.ready.then(reg => {
                     reg.showNotification(`🚨 ${selectedMotor} CRITICAL`, {
-                        body: `THRESHOLD BREACHED!\nTemp: ${data.temp.toFixed(1)}°C | Vibe: ${data.vibration}`,
+                        body: `THRESHOLD BREACHED!\nTemp: ${data.temp.toFixed(1)}°C | Vibe: ${Math.round(data.vibration)}`,
                         vibrate: [500, 200, 500],
                         icon: '/favicon.svg'
                     });
@@ -112,14 +151,14 @@ export default function App() {
     
     const interval = setInterval(fetchHardwareData, 1000);
     return () => clearInterval(interval); 
-  }, [systemOn, selectedMotor]); 
+  }, [systemOn, selectedMotor, demoMode]); 
 
   // --- CHART INJECTION ---
   const displayData = graphHistory.slice(-timeRange);
   let projectedData = [...displayData];
   const lastPoint = projectedData[projectedData.length - 1];
   
-  if (lastPoint && !isBackendOffline) {
+  if (lastPoint && (!isBackendOffline || demoMode)) {
     projectedData.push({
       time: lastPoint.time + 30, 
       ghost_temp: lastPoint.future_temp,             
@@ -141,7 +180,7 @@ export default function App() {
     }
   `;
 
-  const ChartBox = ({ title, dKey, color, data, threshold, ghostKey, ghostName }) => (
+  const ChartBox = ({ title, dKey, color, data, threshold, ghostKey }) => (
     <div style={{ display: 'flex', flexDirection: 'column', backgroundColor: '#111827', padding: '20px', borderRadius: '15px', marginBottom: '25px', height: '320px', border: '1px solid #1F2937' }}>
       <p style={{ margin: '0 0 10px 0', color: '#9CA3AF', fontWeight: 'bold' }}>{title}</p>
       <ResponsiveContainer width="100%" height="100%">
@@ -178,19 +217,37 @@ export default function App() {
       </div>
 
       <div className="main-content" style={{ flex: 1, padding: '40px', overflowY: 'auto' }}>
+        
+        {/* NEW: UNIVERSAL DEMO TOGGLE BAR */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '20px' }}>
+          <button 
+            onClick={() => setDemoMode(!demoMode)}
+            style={{ 
+              padding: '8px 16px', backgroundColor: demoMode ? '#8B5CF6' : '#374151', color: 'white', border: '1px solid',
+              borderColor: demoMode ? '#A78BFA' : '#4B5563', borderRadius: '20px', fontWeight: 'bold', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: '8px', transition: '0.3s'
+            }}
+          >
+            <span style={{ fontSize: '1.2rem' }}>{demoMode ? '🧪' : '📡'}</span>
+            {demoMode ? 'DEMO MODE: ACTIVE' : 'LIVE DATA: ACTIVE'}
+          </button>
+        </div>
+
         {activeTab === 'home' ? (
           <div style={{ maxWidth: '900px', margin: '0 auto' }}>
-            <h1>{selectedMotor} Control</h1>
+            <h1 style={{ marginTop: 0 }}>{selectedMotor} Control</h1>
             
             <div style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#111827', padding: '30px', borderRadius: '15px', marginBottom: '40px', border: '1px solid #1F2937' }}>
                <div>
                   <h3>Active Data Pipeline</h3>
-                  <p style={{ color: isBackendOffline ? '#EF4444' : '#10B981' }}>{isBackendOffline ? "🔴 DISCONNECTED" : "🟢 Telemetry Connected"}</p>
+                  <p style={{ color: (isBackendOffline && !demoMode) ? '#EF4444' : '#10B981', margin: 0 }}>
+                    {demoMode ? "🧪 Simulator Running" : (isBackendOffline ? "🔴 DISCONNECTED" : "🟢 Telemetry Connected")}
+                  </p>
                </div>
                <div style={{ display: 'flex', gap: '15px' }}>
-                  <button onClick={() => setSystemOn(true)} disabled={isUnstable || isBackendOffline} style={{ padding: '15px 30px', background: (isUnstable || isBackendOffline) ? '#374151' : '#10B981', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold' }}>START</button>
-                  <button onClick={() => setSystemOn(false)} style={{ padding: '15px 30px', background: '#EF4444', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold' }}>STOP</button>
-                  <button onClick={enableNotifications} style={{ padding: '15px 30px', background: '#F59E0B', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold' }}>🔔 ALERTS</button>
+                  <button onClick={() => setSystemOn(true)} disabled={(isUnstable || isBackendOffline) && !demoMode} style={{ padding: '15px 30px', background: ((isUnstable || isBackendOffline) && !demoMode) ? '#374151' : '#10B981', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>START</button>
+                  <button onClick={() => setSystemOn(false)} style={{ padding: '15px 30px', background: '#EF4444', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>STOP</button>
+                  <button onClick={enableNotifications} style={{ padding: '15px 30px', background: '#F59E0B', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>🔔 ALERTS</button>
                </div>
             </div>
 
