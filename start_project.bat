@@ -1,7 +1,7 @@
 @echo off
 color 0B
 echo ===================================================
-echo   ⚡ MOTOR-HEALTH-MONITOR
+echo MOTOR-HEALTH-MONITOR
 echo ===================================================
 echo.
 
