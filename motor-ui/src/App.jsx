@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts';
 
-console.log("THIS IS THE NEW FILE");
-
 // --- NOTIFICATION SETUP ---
 const PUBLIC_KEY = "BIuK1jgnnxunwDzvs7kdIlY5TIn9QX0xahfBj9VrX5ExQC2hnbx-yJ6Ik8GHfWYXdpvZtpvemOoqv46GXHakcaA"; 
 
@@ -84,11 +82,11 @@ export default function App() {
         
         let t = 35, v = 1500, c = 2.0, status = "NORMAL", log = "Systems Nominal", vol = 15;
         
-        // FIX: Instead of returning/freezing, simulate a graceful motor spin-down!
+        // Simulate graceful motor spin-down
         if (!systemOn) {
-          t = 28 + Math.random(); // Drops to room temp
-          v = 0 + (Math.random() * 50); // Motor stopped vibrating
-          c = 0.0; // Power cut
+          t = 28 + Math.random(); 
+          v = 0 + (Math.random() * 50); 
+          c = 0.0; 
           status = "NORMAL";
           log = "🛑 Motor Halted (Safe State)";
           vol = 0;
@@ -127,8 +125,12 @@ export default function App() {
 
       // 2. LIVE HARDWARE FETCH
       try {
+        // ✅ CORRECT RENDER CLOUD URL
         const response = await fetch('https://motor-health-monitor.onrender.com/api/motor');
+        
+        // ❌ LOCALHOST URL (Commented out for production)
         // const response = await fetch('http://localhost:8000/api/motor');
+        
         const newData = await response.json();
         
         if (newData.volatility === undefined) {
@@ -151,7 +153,7 @@ export default function App() {
         setIsUnstable(currentlyUnstable);
 
         if (systemOn && currentlyUnstable) {
-            setSystemOn(false); // <--- THIS IS THE AUTO-SHUTDOWN THAT TRIGGERED!
+            setSystemOn(false); 
             if (Notification.permission === 'granted') {
                 navigator.serviceWorker.ready.then(reg => {
                     reg.showNotification(`🚨 ${selectedMotor} CRITICAL`, {
@@ -207,7 +209,13 @@ export default function App() {
       display: flex; 
       flex-direction: column; 
       justify-content: center; 
-      word-break: break-word; 
+      white-space: nowrap; 
+    }
+
+    .top-cards-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 30px;
     }
 
     .metrics-grid {
@@ -227,12 +235,31 @@ export default function App() {
       flex-direction: column;
       justify-content: center;
     }
+
+    .mobile-header { display: none; }
     
+    /* 💻 TABLET RULES (For iPads & Smaller Laptops) */
+    @media (max-width: 1100px) and (min-width: 769px) {
+      .card-inner h2 { font-size: 2.5rem !important; }
+      .metrics-grid { gap: 10px; }
+      .metric-box h3 { font-size: 1.4rem !important; }
+    }
+
+    /* 📱 MOBILE RULES */
     @media (max-width: 768px) {
       .sidebar-container { position: fixed; z-index: 100; transform: translateX(-100%); transition: 0.3s; height: 100vh; }
       .sidebar-container.open { transform: translateX(0); }
+      
       .mobile-header { display: flex; position: fixed; top: 0; left: 0; right: 0; height: 60px; background: #111827; z-index: 50; align-items: center; padding: 0 20px; justify-content: space-between; border-bottom: 1px solid #1F2937; }
-      .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+      
+      .main-content { padding-top: 80px !important; padding-left: 15px !important; padding-right: 15px !important; }
+      
+      .top-cards-grid { grid-template-columns: 1fr; gap: 15px; }
+      .metrics-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      
+      .card-inner h2 { font-size: 2.2rem !important; margin: 10px 0; }
+      .controls-bar { flex-direction: column; gap: 15px; }
+      .controls-bar button { width: 100%; }
     }
   `;
 
@@ -266,9 +293,17 @@ export default function App() {
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#0B0F19', color: 'white', fontFamily: 'Inter, sans-serif' }}>
       <style>{customStyles}</style>
 
+      {/* 📱 MOBILE HEADER */}
+      <div className="mobile-header">
+        <h2 style={{ color: '#3B82F6', fontSize: '1.2rem', margin: 0 }}>⚡ MOTOR HEALTH</h2>
+        <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '1.8rem', cursor: 'pointer' }}>
+          {isSidebarOpen ? '✕' : '☰'}
+        </button>
+      </div>
+
       {/* SIDEBAR */}
       <div className={`sidebar-container ${isSidebarOpen ? 'open' : ''}`} style={{ width: '260px', backgroundColor: '#111827', padding: '30px 20px', borderRight: '1px solid #1F2937' }}>
-        <h2 style={{ color: '#3B82F6', fontSize: '1.2rem' }}>⚡ MOTOR HEALTH</h2>
+        <h2 style={{ color: '#3B82F6', fontSize: '1.2rem', marginTop: '20px' }}>⚡ MOTOR HEALTH</h2>
         <p style={{ color: '#4B5563', fontSize: '0.75rem', marginBottom: '30px' }}>AI PREDICTIVE MONITOR</p>
         
         <select value={selectedMotor} onChange={(e) => setSelectedMotor(e.target.value)} style={{ width: '100%', padding: '10px', background: '#1F2937', color: 'white', borderRadius: '6px', marginBottom: '30px' }}>
@@ -276,8 +311,8 @@ export default function App() {
         </select>
 
         <nav>
-          <button onClick={() => setActiveTab('home')} style={{ width: '100%', padding: '15px', background: activeTab === 'home' ? '#1F2937' : 'transparent', color: '#3B82F6', border: 'none', textAlign: 'left', cursor: 'pointer' }}>🏠 COMMAND CENTER</button>
-          <button onClick={() => setActiveTab('graphs')} style={{ width: '100%', padding: '15px', background: activeTab === 'graphs' ? '#1F2937' : 'transparent', color: '#9CA3AF', border: 'none', textAlign: 'left', cursor: 'pointer', marginTop: '10px' }}>📈 LIVE TELEMETRY</button>
+          <button onClick={() => { setActiveTab('home'); setIsSidebarOpen(false); }} style={{ width: '100%', padding: '15px', background: activeTab === 'home' ? '#1F2937' : 'transparent', color: '#3B82F6', border: 'none', textAlign: 'left', cursor: 'pointer' }}>🏠 COMMAND CENTER</button>
+          <button onClick={() => { setActiveTab('graphs'); setIsSidebarOpen(false); }} style={{ width: '100%', padding: '15px', background: activeTab === 'graphs' ? '#1F2937' : 'transparent', color: '#9CA3AF', border: 'none', textAlign: 'left', cursor: 'pointer', marginTop: '10px' }}>📈 LIVE TELEMETRY</button>
         </nav>
       </div>
 
@@ -293,7 +328,7 @@ export default function App() {
             }}
           >
             <span style={{ fontSize: '1.2rem' }}>{demoMode ? '🧪' : '📡'}</span>
-            {demoMode ? 'DEMO MODE: ACTIVE' : 'LIVE DATA: ACTIVE'}
+            {demoMode ? 'DEMO MODE' : 'LIVE DATA'}
           </button>
         </div>
 
@@ -301,21 +336,21 @@ export default function App() {
           <div style={{ width: '100%', margin: '0 auto' }}>
             <h1 style={{ marginTop: 0 }}>{selectedMotor} Control</h1>
             
-            <div style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#111827', padding: '30px', borderRadius: '15px', marginBottom: '40px', border: '1px solid #1F2937' }}>
-               <div>
+            <div className="controls-bar" style={{ display: 'flex', justifyContent: 'space-between', backgroundColor: '#111827', padding: '30px', borderRadius: '15px', marginBottom: '30px', border: '1px solid #1F2937' }}>
+               <div style={{ marginBottom: '15px' }}>
                   <h3>Active Data Pipeline</h3>
                   <p style={{ color: (isBackendOffline && !demoMode) ? '#EF4444' : '#10B981', margin: 0 }}>
                     {demoMode ? "🧪 Simulator Running" : (isBackendOffline ? "🔴 DISCONNECTED" : "🟢 Telemetry Connected")}
                   </p>
                </div>
-               <div style={{ display: 'flex', gap: '15px' }}>
-                  <button onClick={() => setSystemOn(true)} disabled={(isUnstable || isBackendOffline) && !demoMode} style={{ padding: '15px 30px', background: ((isUnstable || isBackendOffline) && !demoMode) ? '#374151' : '#10B981', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>START</button>
-                  <button onClick={() => setSystemOn(false)} style={{ padding: '15px 30px', background: '#EF4444', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>STOP</button>
-                  <button onClick={enableNotifications} style={{ padding: '15px 30px', background: '#F59E0B', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer' }}>🔔 ALERTS</button>
+               <div style={{ display: 'flex', gap: '10px' }}>
+                  <button onClick={() => setSystemOn(true)} disabled={(isUnstable || isBackendOffline) && !demoMode} style={{ padding: '15px 20px', background: ((isUnstable || isBackendOffline) && !demoMode) ? '#374151' : '#10B981', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', flex: 1 }}>START</button>
+                  <button onClick={() => setSystemOn(false)} style={{ padding: '15px 20px', background: '#EF4444', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', flex: 1 }}>STOP</button>
+                  <button onClick={enableNotifications} style={{ padding: '15px 20px', background: '#F59E0B', border: 'none', borderRadius: '8px', color: 'white', fontWeight: 'bold', cursor: 'pointer', flex: 1 }}>🔔</button>
                </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '30px' }}>
+            <div className="top-cards-grid">
               <div className="ani-card" style={{ backgroundImage: motorData.ml_status === 'WARNING' ? 'linear-gradient(90deg, #ef4444, #7f1d1d, #ef4444)' : (motorData.ml_status === 'DISCONNECTED' || motorData.ml_status === 'OFFLINE' ? 'none' : 'linear-gradient(90deg, #10b981, #064e3b, #10b981)'), backgroundColor: motorData.ml_status === 'DISCONNECTED' || motorData.ml_status === 'OFFLINE' ? '#374151' : 'transparent' }}>
                 <div className="card-inner">
                   <p style={{ color: '#9CA3AF', fontSize: '0.9rem', margin: '0 0 10px 0' }}>HARDWARE HEALTH</p>
